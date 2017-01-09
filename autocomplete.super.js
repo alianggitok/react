@@ -1,14 +1,18 @@
-﻿/**
- * @module
+/**
+ * @module depend by jQuery & react
  * @author Warren
  * @version 1.00
  */
 
 'use strict';
 
+var ariaTimer=null;
 var Autocomplete=React.createClass({
 	getDefaultProps:function(){
 		return {
+			i18n:uiComponentI18n.AUTOCOMPLETE,//国际化数据
+			id:'',
+			index:'',
 			data:[],//原始选项源（未过滤的）
 			layoutData:{},//布局
 			maxItemLength:null,//最大匹配选项dom渲染数量
@@ -17,9 +21,9 @@ var Autocomplete=React.createClass({
 			downForever:true,//是否始终在操作时打开，否则只在有值且有匹配数据才打开
 			currentItemClassName:'current',//表示当前值所选项
 			selectItemClassName:'select',//表示鼠标定位到的项
-			onChange:function(){},
-			value:'',
-			'data-value':{
+			onChange:function(){},//默认的onChange事件
+			value:'',//赋值
+			'data-value':{//完整的 label & value
 				label:'',
 				value:''
 			}
@@ -27,35 +31,46 @@ var Autocomplete=React.createClass({
 	},
 	getInitialState:function(){
 		return {
-			origData:this.props.data,
-			filteredData:[],
-			listDown:this.props.listDown,
+			id:this.props.id?this.props.id:(this.props.layoutData.name+this.props.index),
+			origData:this.props.data,//源数据
+			filteredData:[],//过滤后数据
+			listDown:this.props.listDown,//匹配列表收展
 			listStyle:{
 				width:'auto',
 				height:'auto',
-				top:'55px',
+				top:$(this.refs.box).outerHeight()+'px',
 				left:'0'
 			},
+			listMouseEntered:false,//鼠标坐标是否在list上
 			inputValue:this.props.value,
 			completeValue:{
 				label:'',
 				value:''
 			},
-			ariaInfo:'',
-			listMouseEnter:false
+			ariaSelectedOptionLabel:'',
+			ariaSelectedOptionID:'',
+			ariaTxt:''
 		};
 	},
 	componentDidMount:function(){
 		var _class=this,
 			input=_class.refs.input,
-			listClassName='.'+_class.refs.list.className;
+			listClassName='.'+_class.refs.list.className,
+			eventMouseDownName='mousedown.autocomplete'+_class.state.id,
+			eventResizeName='resize.autocomplete'+_class.state.id;
 		_class.setListStyle();//初次装载设置样式
-		$(window).on('mousedown.autocomplete',function(e){//点击的对象不在list上时收起
-			if($(e.target).closest(listClassName).length<1&&!$(e.target).is($(input))){
+		$(document).off(eventMouseDownName).on(eventMouseDownName,function(e){//点击的对象不在list上时收起
+			if($(e.target).closest(listClassName).length<1&&!_class.state.listMouseEntered&&!$(e.target).is($(input))){
 				_class.setState({
 					listDown:false
 				});
-				_class.setListStyle();
+			}
+		});
+		$(window).off(eventResizeName).on(eventResizeName,function(e){//窗体大小调整时关闭匹配列表
+			if(_class.state.listDown){
+				_class.setState({
+					listDown:false
+				});
 			}
 		});
 	},
@@ -128,6 +143,7 @@ var Autocomplete=React.createClass({
 	},
 	change:function(event,inputValue,callback){
 		var _class=this,
+			list=$(_class.refs.list),
 			inputValue=(function(){
 				var temp;
 				if(event){
@@ -146,21 +162,25 @@ var Autocomplete=React.createClass({
 				var is=false;
 				// console.log(_class.state.focus)
 				if(_class.props.downForever){//是否始终在操作时打开
-					is= (filteredData.length&&filteredData[0].label!==inputValue)?true:false;
+					is= (filteredData.length>0&&filteredData[0].label!==inputValue)?true:false;
 				}else{//如果不是，则只在有值且有匹配数据才打开
-					is= inputValue&&(filteredData.length&&filteredData[0].label!==inputValue)?true:false;
+					is= inputValue&&(filteredData.length>0&&filteredData[0].label!==inputValue)?true:false;
 				}
-
 				return is;
 			}())
 		});
-
-		_class.setValue(inputValue,filteredData,function(){
+		_class.setValue(inputValue,filteredData,function(){//与listdown的state同步（至少提前）设置，避免失焦而影响中文输入法
 			callback?callback():(function(){}());
 			if(nativeEvent){
-				_class.props.onChange(nativeEvent);
+				if(nativeEvent.target){
+					_class.props.onChange(nativeEvent);
+				}
 			}
 		});
+		if(!_class.state.listMouseEntered){
+			list.scrollTop(0);
+		}
+		
 
 		// console.log(event)
 		
@@ -187,19 +207,44 @@ var Autocomplete=React.createClass({
 					temp.value=filteredData[0].value;
 				}
 				return temp;
-			}()),
-			ariaInfo:inputValue
+			}())
 		},function(){
 			callback?callback():(function(){}());
+			// console.log('inputValue:','"'+inputValue+'"');
+			_class.setAria(0);
 		});
-
 	},
-	select:function(inputValue){
-		var _class=this;
-		_class.change(null,inputValue,function(){
-			_class.setState({
-				listDown:false
-			});
+	setAria:function(itemIndex){
+		var _class=this,
+			i18n=_class.props.i18n,
+			selectedItem=$(_class.refs.list).find('.item.'+_class.props.selectItemClassName),
+			inputValue=_class.state.inputValue,
+			filteredData=_class.state.filteredData,
+			itemLabel=filteredData.length>0?selectedItem.text():'',
+			itemID=_class.state.id+'_autocomplete_option_'+itemIndex;
+		_class.setState({
+			ariaSelectedOptionLabel:'',
+			ariaSelectedOptionID:'',
+			ariaTxt:''
+		},function(){
+			clearTimeout(ariaTimer);
+			ariaTimer=null;
+			ariaTimer=setTimeout(function(){
+				_class.setState({
+					ariaSelectedOptionLabel:itemLabel,
+					ariaSelectedOptionID:filteredData.length>0?itemID:'',
+					ariaTxt:(function(){
+						var txt='',
+							typingTxt=inputValue?i18n.ARIA.TYPE.replace('{words}',inputValue):'',
+							selectedTxt=(filteredData.length>0&&selectedItem.length>0)?
+								i18n.ARIA.SELECTED.replace('{label}',itemLabel).replace('{length}',filteredData.length):
+								i18n.ARIA.NOMATCHED;
+						txt=selectedItem.length>0?typingTxt+selectedTxt:'';
+						// console.log('aria:',txt);
+						return txt;
+					}())
+				});
+			},600);
 		});
 	},
 	inputEvents:function(){
@@ -208,7 +253,6 @@ var Autocomplete=React.createClass({
 			currentItemClassName=_class.props.currentItemClassName;
 		return{
 			keyDown:function(event){
-				// _class.change(event,event.target.value)
 				if(_class.state.listDown){
 					event.stopPropagation();//如果下拉展开，则停止该事件向上冒泡
 				}
@@ -221,7 +265,7 @@ var Autocomplete=React.createClass({
 						return _class.state.listDown?(selectItem.text()||currentItem.text()):event.target.value;
 					},
 					letListDown=function(){
-						if(!_class.state.listDown&&items.length){
+						if(!_class.state.listDown&&items.length>0){
 							_class.setState({
 								listDown:true
 							});
@@ -240,14 +284,19 @@ var Autocomplete=React.createClass({
 
 						list.scrollTop(top+list.scrollTop()-list.height()+currentDom.outerHeight());
 					},
-					setSelect=function(index,actionIndex){
-						// console.log('setSelect:',index,actionIndex)
+					setSelect=function(actionIndex,beScroll){
+						// console.log('setSelect:',actionIndex)
+						if(typeof(beScroll)==='undefined'){
+							beScroll=true;
+						}
 						letListDown();
-						if(items.length){
-							items.removeClass(selectItemClassName);
-							items.eq(actionIndex).addClass(selectItemClassName);
-
+						if(items.length>0){
+							items.removeClass(selectItemClassName).attr('aria-selected','false');
+							items.eq(actionIndex).addClass(selectItemClassName).attr('aria-selected','true');
+							_class.setAria(actionIndex);
+							if(beScroll){
 							scroll(actionIndex);
+							}
 						}
 					};
 
@@ -259,22 +308,24 @@ var Autocomplete=React.createClass({
 
 					switch(keyCode){
 						case 36://home
-							index=null;
+							// event.preventDefault();
 							actionIndex=0;
-							setSelect(index,actionIndex);
+							setSelect(actionIndex);
 							break;
 						case 35://end
-							index=null;
+							// event.preventDefault();
 							actionIndex=items.length-1;
-							setSelect(index,actionIndex);
+							setSelect(actionIndex);
 							break;
 						case 38://up
+							event.preventDefault();
 							actionIndex=(index-1)<=minIndex?minIndex:(index-1);
-							setSelect(index,actionIndex);
+							setSelect(actionIndex);
 							break;
 						case 40://down
+							event.preventDefault();
 							actionIndex=(index+1)>maxIndex?maxIndex:(index+1);
-							setSelect(index,actionIndex);
+							setSelect(actionIndex);
 							break;
 						case 27://esc
 							letListUp();
@@ -284,7 +335,7 @@ var Autocomplete=React.createClass({
 							break;
 						case 13://enter
 							_class.change(event,getValue(),function(){
-									letListUp();
+								letListUp();
 							});
 							if(_class.state.listDown){
 								event.preventDefault();
@@ -292,8 +343,7 @@ var Autocomplete=React.createClass({
 							break;
 						default:
 							_class.change(event,event.target.value,function(){
-								items.removeClass(selectItemClassName);
-								$(_class.refs.list).scrollTop(0);
+								setSelect(0,false);
 							});
 					}
 				}());
@@ -310,6 +360,7 @@ var Autocomplete=React.createClass({
 			keyUp:function(event){
 				if(_class.state.listDown){
 					event.stopPropagation();//如果下拉展开，则停止该事件向上冒泡
+					// event.preventDefault();
 				}
 				var keyCode=event.keyCode||event.which;
 
@@ -324,22 +375,27 @@ var Autocomplete=React.createClass({
 				
 			},
 			blur:function(event){
+				// console.log(event.type)
 				_class.change(event,event.target.value,function(){
-					if(!_class.state.listMouseEnter){
+					if(!_class.state.listMouseEntered){
 						_class.setState({
 							listDown:false,
-							listMouseEnter:false
+							listMouseEntered:false
 						});
 					}
 				});
 			},
 			focus:function(event){
-				_class.change(event,event.target.value);
+				_class.setListStyle();
+				_class.change(event,event.target.value,function(){
+					_class.setState({
+						listMouseEntered:false
+					});
+				});
 			},
 			click:function(event){
-				_class.setListStyle();
 			},
-			doubleClick:function(){
+			doubleClick:function(event){
 				
 			}
 		};
@@ -348,28 +404,47 @@ var Autocomplete=React.createClass({
 		var _class=this,
 			selectItemClassName=_class.props.selectItemClassName;
 		return {
-			itemMouseOver:function(event){
-				var itemDom=event.target,
-					listClassName='.'+_class.refs.list.className;
-				$(itemDom).closest(listClassName).find('.item').removeClass(selectItemClassName);
-				$(itemDom).addClass(selectItemClassName);
+			listMouseOver:function(event){
 				_class.setState({
-					listMouseEnter:true
+					listMouseEntered:true
+				});
+			},
+			listMouseOut:function(event){
+				_class.setState({
+					listMouseEntered:false
+				});
+			},
+			itemMouseOver:function(event){
+				var items=$(_class.refs.list).find('.item'),
+					itemDom=event.target,
+					listClassName='.'+_class.refs.list.className,
+					index=items.index($(itemDom));
+				$(itemDom).closest(listClassName).find('.item').removeClass(selectItemClassName).attr('aria-selected','false');
+				$(itemDom).addClass(selectItemClassName).attr('aria-selected','true');
+				// console.log(index)
+				_class.setState({
+					listMouseEntered:true
+				},function(){
+					_class.setAria(index);
 				});
 			},
 			itemMouseOut:function(event){
 				var itemDom=event.target;
 				// $(itemDom).removeClass(selectItemClassName);
 				_class.setState({
-					listMouseEnter:false
+					listMouseEntered:false
 				});
 			},
 			itemClick:function(event){
 				var list=$(_class.refs.list),
 					selectItem=list.find('.'+selectItemClassName);
-				_class.select(selectItem.text());
-				_class.setState({
-					listMouseEnter:true
+				// console.log(_class.refs.input)
+				_class.refs.input.focus();
+				_class.change(null,selectItem.text(),function(){
+					_class.setState({
+						listDown:false,
+						listMouseEntered:true
+					});
 				});
 			}
 		}
@@ -403,7 +478,7 @@ var Autocomplete=React.createClass({
 			events=_class.listEvents(),
 			maxItemLength=_class.props.maxItemLength?_class.props.maxItemLength:data.length,
 			pushedLength=0,
-			itemClassName=_class.props.currentItemClassName+' '+_class.props.selectItemClassName;
+			itemClassName='';
 
 		// console.time('make');
 		(function(){
@@ -414,21 +489,20 @@ var Autocomplete=React.createClass({
 				if(pushedLength<maxItemLength){
 					doms.push(
 						<dl>
-							{group?<dt className={'group'}>{group}</dt>:''}
+							{group?<dt aria-hidden="true" className={'group'}>{group}</dt>:''}
 							{
 								(function(){
 									var x,item,
-										itemClassName=_class.props.currentItemClassName+' '+_class.props.selectItemClassName,
 										temp=[];
 									for(x=0;x<data.length;x+=1){
-										item=data[x],
-										itemClassName=(x===0&&_class.state.inputValue)?itemClassName:'';
+										item=data[x];
 										if(item.group===group&&pushedLength<maxItemLength){
 											pushedLength+=1;
+											itemClassName=(x===0&&_class.state.inputValue)?(_class.props.currentItemClassName+' '+_class.props.selectItemClassName):'';
 											temp.push(
-												<dd className={'item '+itemClassName} value={item.value} itemID={x}
-													onMouseEnter={(event)=>events.itemMouseOver(event)}
-													onMouseLeave={(event)=>events.itemMouseOut(event)}
+												<dd role="option" id={_class.state.id+'_autocomplete_option_'+x} className={'item '+itemClassName} value={item.value} itemID={x} 
+													onMouseEnter={(event)=>events.itemMouseOver(event)} 
+													onMouseLeave={(event)=>events.itemMouseOut(event)} 
 													onClick={(event)=>events.itemClick(event)}>
 													{item.label}
 												</dd>
@@ -447,48 +521,99 @@ var Autocomplete=React.createClass({
 
 		return doms;
 	},
-
+	clear:function(event){
+		event.preventDefault();
+		var _class=this;
+		_class.change(null,'',function(){
+			_class.refs.input.focus();
+		});
+	},
+	clearBtn:function(){
+		var _class=this,
+			clearBtn=_class.refs.clear;
+		return {
+			style:{
+				'position':'absolute',
+				'top':$(_class.refs.box).height()/2-8+'px',
+				'right':'25px',
+				'height':'16px',
+				'font-size':'16px',
+				'line-height':'16px',
+				'text-decoration':'none',
+				'border':'none',
+				'overflow':'hidden',
+				'display':'none'
+			},
+			show:function(){
+				$(clearBtn).show();
+			},
+			hide:function(){
+				$(clearBtn).hide();
+			}
+		};
+	},
 	render:function(){
 		
 		var _class=this,
+			i18n=_class.props.i18n,
 			layoutData=_class.props.layoutData,
 			labelName=layoutData.label?layoutData.label:'',
 			labelClassName=layoutData.labelClassName ? layoutData.labelClassName : '',
-			ariaInfo=_class.state.ariaInfo,
-			index=_class.props.index?_class.props.index:'',
-			name=layoutData.name+index,
-			id=name,
+			ariaTxt=_class.state.ariaTxt,
+			// ariaSelectedOptionLabel=_class.state.ariaSelectedOptionLabel,
+			// ariaSelectedOptionID=_class.state.ariaSelectedOptionID,
+			id=_class.state.id,
 			listDown=_class.state.listDown,
 			listStyle=$.extend(_class.state.listStyle,{display:listDown?'block':'none'}),
-			inputEvents=_class.inputEvents();
+			listEvents=_class.listEvents(),
+			inputEvents=_class.inputEvents(),
+			clearBtn=_class.clearBtn();
 
 		return (
-			<label className="ui-autocomplete" htmlFor={name} ref="wrapper">
-				<span className={'display-label ' + labelClassName} >
+			<label className="ui-autocomplete" htmlFor={id} ref="wrapper">
+				<span id={id+'_autocomplete_label'} className={'display-label ' + labelClassName} >
 					{labelName}
 					{layoutData.required?<span className="star">*</span>:''}
 				</span>
-				<div className={'ui-autocomplete-box inline-block '+(listDown?'select-open':'')} ref="box">
-					<span role="status" aria-live="assertive" className="sr-only">
-						{ariaInfo}
-					</span>
-					<input name={name} id={id} ref="input" 
+				<div ref="box" className={'ui-autocomplete-box inline-block '+(listDown?'select-open':'')} 
+					onMouseEnter={clearBtn.show} onMouseLeave={clearBtn.hide}>
+					<input ref="input" name={id} id={id} type="text" role="combobox" 
+						aria-autocomplete="both" 
+						aria-expanded={listDown} 
+						// aria-haspopup={listDown} 
+						aria-required={layoutData.required?'true':'false'} 
+						// aria-owns={id+'_autocomplete_list '+id+'_autocomplete_aria'} 
+						// aria-label={ariaSelectedOptionLabel||ariaTxt} 
+						// aria-valuetext={ariaSelectedOptionLabel||ariaTxt} 
+						// aria-activedescendant={ariaSelectedOptionID} 
+						// aria-controls={id+'_autocomplete_list'} 
+						aria-flowto={id+'_autocomplete_aria'} 
+						autoComplete="off" 
 						placeholder={layoutData.placeholder?layoutData.placeholder:labelName} 
-						autocomplete="off" role="combobox" aria-hidden="true" aria-autocomplete="both" 
 						value={_class.state.inputValue} 
 						data-value={JSON.stringify(_class.state.completeValue)} 
-						onChange={(event)=>_class.change(event,null)} 
-						onKeyDown={(event)=>inputEvents.keyDown(event)} 
-						onKeyUp={(event)=>inputEvents.keyUp(event)} 
-						onKeyPress={(event)=>inputEvents.keyPress(event)} 
-						onBlur={(event)=>inputEvents.blur(event)} 
-						onFocus={(event)=>inputEvents.focus(event)} 
-						onClick={(event)=>inputEvents.click(event)} 
-						onDoubleClick={(event)=>inputEvents.doubleClick(event)}
+						onChange={event=>_class.change(event)} 
+						onInput={event=>_class.change(event)} 
+						onKeyDown={event=>inputEvents.keyDown(event)} 
+						onKeyUp={event=>inputEvents.keyUp(event)} 
+						onKeyPress={event=>inputEvents.keyPress(event)} 
+						onBlur={event=>inputEvents.blur(event)} 
+						onFocus={event=>inputEvents.focus(event)} 
+						onClick={event=>inputEvents.click(event)} 
+						onDoubleClick={event=>inputEvents.doubleClick(event)} 
 					/>
-					<div className="autocomplete-list" style={listStyle} ref="list">
+					<div role="listbox" id={id+'_autocomplete_list'} ref="list" className="autocomplete-list" style={listStyle} 
+						onMouseEnter={event=>listEvents.listMouseOver(event)} 
+						onMouseLeave={event=>listEvents.listMouseOut(event)} 
+						aria-hidden="true">
 						{listDown?_class.makeList(_class.state.filteredData):''}
 					</div>
+					<span role="status" id={id+'_autocomplete_aria'} ref="aria" className="sr-only" aria-live="assertive">
+						{ariaTxt}
+					</span>
+					<a role="button" className="clearBtn" ref="clear" aria-hidden="true" style={clearBtn.style} onClick={event=>_class.clear(event)}>
+						&times;<span className="sr-only">{i18n.CLEAR}</span>
+					</a>
 				</div>
 			</label>
 		)
