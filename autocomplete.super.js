@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @module depend by jQuery & react
  * @author Warren
  * @version 1.00
@@ -13,14 +13,16 @@ var Autocomplete=React.createClass({
 			i18n:uiComponentI18n.AUTOCOMPLETE,//国际化数据
 			id:'',
 			index:'',
-			data:[],//原始选项源（未过滤的）
 			layoutData:{},//布局
-			maxItemLength:null,//最大匹配选项dom渲染数量
+			data:[],//原始选项源（未过滤的）
 			listDown:false,//默认匹配选项列表收起
+			matchKey:'match',//匹配依据字段
 			beMatchValue:true,//是否匹配data中的value
+			maxItemLength:null,//最大匹配选项dom渲染数量
 			downForever:true,//是否始终在操作时打开，否则只在有值且有匹配数据才打开
-			currentItemClassName:'current',//表示当前值所选项
-			selectItemClassName:'select',//表示鼠标定位到的项
+			autoFillWhenBlur:true,//失焦后便用第一个项自动填充
+			currentItemClassName:'current',//表示当前值所选项的class
+			selectItemClassName:'select',//表示鼠标定位到的项的class
 			onChange:function(){},//默认的onChange事件
 			value:'',//赋值
 			'data-value':{//完整的 label & value
@@ -30,23 +32,23 @@ var Autocomplete=React.createClass({
 		};
 	},
 	getInitialState:function(){
+		var _class=this;
 		return {
-			id:this.props.id?this.props.id:(this.props.layoutData.name+this.props.index),
-			origData:this.props.data,//源数据
-			filteredData:[],//过滤后数据
-			listDown:this.props.listDown,//匹配列表收展
+			id:_class.props.id?_class.props.id:(_class.props.layoutData.name+_class.props.index),
+			origData:_class.props.data,//原始选项
+			filteredData:[],//过滤后的选项
+			matchKey:_class.setMatchKey(_class.props.data[0]),
+			listDown:_class.props.listDown,//匹配列表收展
 			listStyle:{
 				width:'auto',
 				height:'auto',
-				top:$(this.refs.box).outerHeight()+'px',
+				top:$(_class.refs.box).outerHeight()+'px',
 				left:'0'
 			},
 			listMouseEntered:false,//鼠标坐标是否在list上
-			inputValue:this.props.value,
-			completeValue:{
-				label:'',
-				value:''
-			},
+			hoverItemText:'',
+			inputValue:_class.props.value,
+			completeValue:_class.props['data-value'],
 			ariaSelectedOptionLabel:'',
 			ariaSelectedOptionID:'',
 			ariaTxt:''
@@ -60,26 +62,50 @@ var Autocomplete=React.createClass({
 			eventResizeName='resize.autocomplete'+_class.state.id;
 		_class.setListStyle();//初次装载设置样式
 		$(document).off(eventMouseDownName).on(eventMouseDownName,function(e){//点击的对象不在list上时收起
-			if($(e.target).closest(listClassName).length<1&&!_class.state.listMouseEntered&&!$(e.target).is($(input))){
+			var inList=$(e.target).closest(listClassName).length;
+			if(!$(e.target).closest(listClassName).length&&!_class.state.listMouseEntered&&!$(e.target).is($(input))){
 				_class.setState({
-					listDown:false
+					listDown:false,
+					listMouseEntered:false
 				});
+			}else{
+				if(inList){
+					_class.setState({
+						listMouseEntered:true
+					});
+				}
 			}
+			// console.warn(_class.state.listMouseEntered)
 		});
 		$(window).off(eventResizeName).on(eventResizeName,function(e){//窗体大小调整时关闭匹配列表
 			if(_class.state.listDown){
 				_class.setState({
-					listDown:false
+					listDown:false,
+					listMouseEntered:false
 				});
 			}
 		});
 	},
 	componentWillReceiveProps:function(props){
-		this.setState({
-			origData:props.data
+		var _class=this;
+		_class.setState({
+			origData:props.data,
+			matchKey:_class.setMatchKey(props.data[0])
 		});
 	},
 	componentDidUpdate:function(){
+		// console.log(this.props.matchKey)
+	},
+	setMatchKey(item){
+		var dftKey='label',
+			key=this.props.matchKey,
+			temp=dftKey;
+		if(item){//如果数据源没有matchKey，则用label替代
+			temp=typeof item[key]==='undefined'?dftKey:key;
+		}else{
+			temp=dftKey;
+		}
+		return temp;
 	},
 	setListStyle:function(){
 		var box=$(this.refs.box);
@@ -95,43 +121,66 @@ var Autocomplete=React.createClass({
 	filterData:function(inputValue){
 		var _class=this,
 			origData=_class.state.origData,
-			data=JSON.parse(JSON.stringify(origData)),
+			data=(function(){//深拷贝
+				var temp=[],i;
+				for(i=0;i<origData.length;i+=1){
+					temp.push(origData[i]);
+				}
+				return temp;
+			})(),//JSON.parse(JSON.stringify(origData)),
 			newData=[],
+			matchKey=_class.state.matchKey,
+			inputValueLowerCase=inputValue.toLowerCase(),
 			regExpEx='.,\'\"[]()+-*?~!@#$%^&={}|\\\/<>:;`',
-			regExp=(function(){
+			inputValueRegExp=(function(){//转化正则
 				var temp='';
-				inputValue.split('').map(function(word,i){
+				inputValueLowerCase.split('').map(function(word,i){
 					// console.log(word)
-					if(regExpEx.indexOf(word)>=0){
+					if(regExpEx.indexOf(word)>=0){//如果输入的文字中有特殊符号则加转义符\
 						temp+=('\\'+word);
 					}else{
 						temp+=word;
 					}
 				});
-				return eval('/(?:'+ temp +')+/i');
-			}()),
-			inputValueLowerCase=inputValue.toLowerCase();
+				return eval('/(?:'+ temp +')+/i');//转为正则表达式
+			})(),
+			match=function(conditions,item,i){
+				if(conditions){
+					newData.push(item);
+					data.splice(i,1);
+				}
+			};
 		// console.log(regExp)
 
 		if(inputValue){
 
+			// console.log('inputValueRegExp:',inputValueRegExp);
 			// console.time('filterData');
 			(function(){
 				var i,item;
-				for(i=0;i<origData.length;i+=1){
-					item=origData[i];
-					if(inputValueLowerCase===item.value.toLowerCase()){
-						newData.push(item);
+
+				for(i=0;i<data.length;i+=1){//过滤ishot
+					item=data[i];
+					if(item.group.toLowerCase()==='ishot'){
 						data.splice(i,1);
 					}
 				}
 
-				for(i=0;i<data.length;i+=1){
+				for(i=0;i<data.length;i+=1){//value或label全等于时优先匹配
 					item=data[i];
-					if(regExp.test(item.label)){
-						newData.push(item);
-					}
+					match(inputValueLowerCase===item.value.toLowerCase()||inputValueLowerCase===item.label.toLowerCase(),item,i);
 				}
+
+				for(i=0;i<data.length;i+=1){//value优先匹配
+					item=data[i];
+					match(inputValueRegExp.test(item.value.toLowerCase()),item,i);
+				}
+
+				for(i=0;i<data.length;i+=1){//匹配剩余item的label和match
+					item=data[i];
+					match(inputValueRegExp.test(item[matchKey].toLowerCase())||inputValueRegExp.test(item.label.toLowerCase()),item,i);
+				}
+
 			}());
 			// console.timeEnd('filterData');
 
@@ -153,19 +202,18 @@ var Autocomplete=React.createClass({
 				}
 				return temp;
 			}()),
+			matchKey=_class.state.matchKey,
 			filteredData=_class.filterData(inputValue),
 			nativeEvent=event?event.nativeEvent:null;
 
 		_class.setState({
 			filteredData:filteredData,
 			listDown:(function(){
-				var is=false;
+				var is=false,
+					basicIs=filteredData.length>0&&filteredData[0].label!==inputValue;
 				// console.log(_class.state.focus)
-				if(_class.props.downForever){//是否始终在操作时打开
-					is= (filteredData.length>0&&filteredData[0].label!==inputValue)?true:false;
-				}else{//如果不是，则只在有值且有匹配数据才打开
-					is= inputValue&&(filteredData.length>0&&filteredData[0].label!==inputValue)?true:false;
-				}
+
+				is=_class.props.downForever?basicIs:(inputValue&&basicIs);//是否始终在操作时打开，如果不是，则只在有值且有匹配数据才打开
 				return is;
 			}())
 		});
@@ -186,28 +234,34 @@ var Autocomplete=React.createClass({
 		
 	},
 	setValue:function(inputValue,filteredData,callback){
-		var _class=this;
+		var _class=this,
+			matchKey=_class.state.matchKey;
 		// console.log(inputValue,filteredData.length);
 		_class.setState({
+			hoverItemText:'',
 			inputValue:inputValue,
-			completeValue:(function(){
+			completeValue:(function(value,matchItem){
 				//如果没有匹配项，则value为当前输入的内容
 				var temp={
-					label:'',
-					value:inputValue
-				},
-				condition={
-					label:filteredData[0]?filteredData[0].label.toLowerCase()===inputValue.toLowerCase():false,
-					value:filteredData[0]?(_class.props.beMatchValue?filteredData[0].value.toLowerCase()===inputValue.toLowerCase():false):false
-				};
+						label:'',
+						value:value
+					},
+					condition={
+						label:matchItem?(matchItem.label.toLowerCase()===value.toLowerCase()):false,
+						match:matchItem?(matchItem[matchKey].toLowerCase()===value.toLowerCase()):false,
+						value:matchItem?(_class.props.beMatchValue?(matchItem.value.toLowerCase()===value.toLowerCase()):false):false
+					};
+
+				// console.log(matchItem)
+				// console.warn(value,matchItem,condition.match,condition.label,condition.value)
 				
-				//如果当前有输入值，且匹配至少一项，同时该匹配项中label或value全等于当前输入项，则设置label及value
-				if(inputValue&&(condition.label||condition.value)){
-					temp.label=filteredData[0].label;
-					temp.value=filteredData[0].value;
+				//如果当前有输入值，且匹配至少一项，同时该匹配项中(match||label||value)全等于当前输入项，则设置label及value
+				if(value&&(condition.match||condition.label||condition.value)){
+					temp.label=matchItem.label;
+					temp.value=matchItem.value;
 				}
 				return temp;
-			}())
+			})(inputValue,filteredData[0])
 		},function(){
 			callback?callback():(function(){}());
 			// console.log('inputValue:','"'+inputValue+'"');
@@ -257,24 +311,34 @@ var Autocomplete=React.createClass({
 					event.stopPropagation();//如果下拉展开，则停止该事件向上冒泡
 				}
 				var keyCode=event.keyCode||event.which,
+					inputValue=event.target.value,
 					list=$(_class.refs.list),
 					items=list.find('.item'),
 					currentItem=items.filter('.'+currentItemClassName),
 					selectItem=items.filter('.'+selectItemClassName),
 					getValue=function(){
-						return _class.state.listDown?(selectItem.text()||currentItem.text()):event.target.value;
+						// console.log(
+						// 	'enter getValue:',_class.state.listDown?(selectItem.text()||currentItem.text()):inputValue,
+						// 	'\nlistDown:',_class.state.listDown,
+						// 	'\nselectItem:',selectItem.text(),
+						// 	'\ncurrentItem:',currentItem.text(),
+						// 	'\ntarget value:',inputValue
+						// );
+						return _class.state.listDown?(selectItem.text()||currentItem.text()):inputValue;
 					},
 					letListDown=function(){
 						if(!_class.state.listDown&&items.length>0){
 							_class.setState({
-								listDown:true
+								listDown:true,
+								listMouseEntered:false
 							});
 						}
 					},
 					letListUp=function(){
 						if(_class.state.listDown){
 							_class.setState({
-								listDown:false
+								listDown:false,
+								listMouseEntered:false
 							});
 						}
 					},
@@ -295,7 +359,7 @@ var Autocomplete=React.createClass({
 							items.eq(actionIndex).addClass(selectItemClassName).attr('aria-selected','true');
 							_class.setAria(actionIndex);
 							if(beScroll){
-							scroll(actionIndex);
+								scroll(actionIndex);
 							}
 						}
 					};
@@ -342,8 +406,10 @@ var Autocomplete=React.createClass({
 							}
 							break;
 						default:
-							_class.change(event,event.target.value,function(){
-								setSelect(0,false);
+							_class.change(event,inputValue,function(){
+								if(inputValue){
+									setSelect(0,false);
+								}
 							});
 					}
 				}());
@@ -366,7 +432,8 @@ var Autocomplete=React.createClass({
 
 				if(keyCode===13){
 					_class.setState({
-						listDown:false
+						listDown:false,
+						listMouseEntered:false
 					});
 					if(_class.state.listDown){
 						event.preventDefault();
@@ -376,11 +443,21 @@ var Autocomplete=React.createClass({
 			},
 			blur:function(event){
 				// console.log(event.type)
+				// console.log(_class.state.filteredData)
+				// var selectItem=$(_class.refs.list).find('.item').filter('.'+_class.props.selectItemClassName);
+				var filteredData=_class.state.filteredData,
+					hoverItemText=_class.state.hoverItemText;
+				// console.log($(_class.refs.list).find('.item').length,selectItem.length,selectItem.text())
+				// console.warn(filteredData.length,hoverItemText)
+				
+				if(_class.props.autoFillWhenBlur&&_class.state.inputValue&&filteredData.length){
+					$(_class.refs.input).val(hoverItemText||filteredData[0].label);
+				}
 				_class.change(event,event.target.value,function(){
 					if(!_class.state.listMouseEntered){
 						_class.setState({
 							listDown:false,
-							listMouseEntered:false
+							// listMouseEntered:false
 						});
 					}
 				});
@@ -392,6 +469,7 @@ var Autocomplete=React.createClass({
 						listMouseEntered:false
 					});
 				});
+				$(event.target).select();
 			},
 			click:function(event){
 			},
@@ -405,6 +483,8 @@ var Autocomplete=React.createClass({
 			selectItemClassName=_class.props.selectItemClassName;
 		return {
 			listMouseOver:function(event){
+				// var listClassName=_class.refs.list.className;
+				// console.log('xxxxxx',$(event.target).closest('.'+listClassName).length)
 				_class.setState({
 					listMouseEntered:true
 				});
@@ -417,12 +497,13 @@ var Autocomplete=React.createClass({
 			itemMouseOver:function(event){
 				var items=$(_class.refs.list).find('.item'),
 					itemDom=event.target,
-					listClassName='.'+_class.refs.list.className,
+					listClassName=_class.refs.list.className,
 					index=items.index($(itemDom));
-				$(itemDom).closest(listClassName).find('.item').removeClass(selectItemClassName).attr('aria-selected','false');
+				$(itemDom).closest('.'+listClassName).find('.item').removeClass(selectItemClassName).attr('aria-selected','false');
 				$(itemDom).addClass(selectItemClassName).attr('aria-selected','true');
-				// console.log(index)
+				// console.log(event.target.innerText)
 				_class.setState({
+					hoverItemText:event.target.innerText,
 					listMouseEntered:true
 				},function(){
 					_class.setAria(index);
@@ -432,6 +513,7 @@ var Autocomplete=React.createClass({
 				var itemDom=event.target;
 				// $(itemDom).removeClass(selectItemClassName);
 				_class.setState({
+					hoverItemText:'',
 					listMouseEntered:false
 				});
 			},
@@ -443,7 +525,7 @@ var Autocomplete=React.createClass({
 				_class.change(null,selectItem.text(),function(){
 					_class.setState({
 						listDown:false,
-						listMouseEntered:true
+						listMouseEntered:false
 					});
 				});
 			}
@@ -451,6 +533,7 @@ var Autocomplete=React.createClass({
 	},
 	makeList:function(data){
 		var _class=this,
+			i18n=_class.props.i18n,
 			doms=[],
 			groups=(function(){
 				var i,x,group,
@@ -488,8 +571,8 @@ var Autocomplete=React.createClass({
 				group=groups[i];
 				if(pushedLength<maxItemLength){
 					doms.push(
-						<dl>
-							{group?<dt aria-hidden="true" className={'group'}>{group}</dt>:''}
+						<dl key={i}>
+							{group?<dt aria-hidden="true" className={'group'}>{group==='ISHOT'?i18n.HOTCITY:group}</dt>:''}
 							{
 								(function(){
 									var x,item,
@@ -500,9 +583,10 @@ var Autocomplete=React.createClass({
 											pushedLength+=1;
 											itemClassName=(x===0&&_class.state.inputValue)?(_class.props.currentItemClassName+' '+_class.props.selectItemClassName):'';
 											temp.push(
-												<dd role="option" id={_class.state.id+'_autocomplete_option_'+x} className={'item '+itemClassName} value={item.value} itemID={x} 
+												<dd key={x} role="option" id={_class.state.id+'_autocomplete_option_'+x} className={'item '+itemClassName} value={item.value} itemID={x} 
 													onMouseEnter={(event)=>events.itemMouseOver(event)} 
 													onMouseLeave={(event)=>events.itemMouseOut(event)} 
+													onMouseDown={(event)=>events.itemMouseOver(event)} 
 													onClick={(event)=>events.itemClick(event)}>
 													{item.label}
 												</dd>
@@ -626,12 +710,16 @@ var Autocomplete=React.createClass({
 
 
 
-/*
-
+/*用法
 var layoutData={
 	label:"to",
 	name:"to",
-	options:data,
+	options:[
+		{label:'',value:'',group:''},
+		{label:'',value:'',group:''},
+		{label:'',value:'',group:''},
+		...
+	],
 	required:true,
 	space:6,
 	type:"autocomplete",
